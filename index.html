@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バス運行情報システム</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; font-size: 14px; line-height: 1.6; background: #fff; }
+        .header-blue { background: #0000ff; height: 5px; width: 100%; }
+        .container { padding: 15px; }
+        
+        /* ページ制御 */
+        .page { display: none; }
+        .active { display: block; }
+
+        /* メニュー */
+        .menu-item { color: #0000ff; text-decoration: none; display: block; padding: 15px 0; border-bottom: 1px solid #eee; font-weight: bold; }
+        .menu-item::before { content: "◆ "; color: red; }
+        
+        /* 入力エリア */
+        input[type="text"] { width: calc(100% - 110px); padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+        button { padding: 10px 15px; cursor: pointer; background: #eee; border: 1px solid #999; border-radius: 4px; }
+        
+        /* 候補表示 */
+        .suggest-area { border: 1px solid #ccc; margin-top: 10px; background: #fff; border-radius: 4px; overflow: hidden; }
+        .suggest-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #eee; background: #fdfdfd; font-size: 16px; color: #333; }
+        .suggest-item:hover { background: #eef; }
+        
+        /* 選択済みバッジ */
+        .selected-box { background: #ffffcc; border: 1px solid #000; padding: 10px; margin-bottom: 15px; font-weight: bold; }
+        
+        /* バス接近カード */
+        .bus-card { border-left: 5px solid #0000ff; padding: 12px; margin-bottom: 10px; background: #fff; border-bottom: 1px solid #ddd; box-shadow: 2px 2px 5px #eee; }
+        .back-link { color: blue; cursor: pointer; display: inline-block; margin-bottom: 15px; text-decoration: underline; }
+        .status-red { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div class="header-blue"></div>
+
+    <div id="p-home" class="page active">
+        <div class="container">
+            <h2 style="text-align:center;">バス運行情報システム</h2>
+            <a href="#" class="menu-item" onclick="navTo('p-search')">時刻表/バス接近情報</a>
+            <a href="#" class="menu-item" onclick="navTo('p-vehicle')">車両検索</a>
+        </div>
+    </div>
+
+    <div id="p-search" class="page">
+        <div class="container">
+            <span class="back-link" onclick="goBackToHome()">← ホームへ戻る</span>
+            <div id="step-info">
+                <h3 id="search-title">■ 乗車停留所を入力</h3>
+                <div id="dep-selected-display" class="selected-box" style="display:none;"></div>
+                <input type="text" id="searchInput" placeholder="例：宮園">
+                <button onclick="getSuggestions()">候補を表示</button>
+                <div id="suggestArea" class="suggest-area"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="p-result" class="page">
+        <div class="container">
+            <span class="back-link" onclick="navTo('p-search')">← 再検索</span>
+            <h3 id="res-route-name">結果</h3>
+            <div id="results-list"></div>
+        </div>
+    </div>
+
+    <div id="p-vehicle" class="page">
+        <div class="container">
+            <span class="back-link" onclick="navTo('p-home')">← 戻る</span>
+            <h3>■ 車両番号を入力</h3>
+            <input type="text" id="vInput" placeholder="例：801">
+            <button onclick="searchVehicle()">検索</button>
+            <div id="vResults" style="margin-top:15px;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- データベース ---
+const busDatabase = {
+  "operations": [
+    {
+      "op_name": "篠1",
+      "vehicle_id": "801",
+      "trips": [
+        { "route": "宮80", "code": "8001A", "stops": [{"name": "篠原車庫", "plat": "3", "time": "15:52"}, {"name": "宮園三叉路", "plat": "1", "time": "15:54"}, {"name": "宮園台団地", "plat": "", "time": "15:55"}] },
+        { "route": "宮10", "code": "0011A", "stops": [{"name": "宮園台団地", "plat": "1", "time": "15:57"}, {"name": "江ノ原二丁目", "plat": "1", "time": "15:59"}, {"name": "鴻野原", "plat": "", "time": "16:00"}] },
+        { "route": "宮10", "code": "0012A", "stops": [{"name": "鴻野原", "plat": "2", "time": "16:03"}, {"name": "江ノ原二丁目", "plat": "2", "time": "16:05"}, {"name": "宮園台団地", "plat": "", "time": "16:06"}] },
+        { "route": "宮01", "code": "0101A", "stops": [{"name": "宮園台団地", "plat": "2", "time": "16:08"}, {"name": "宮園三叉路", "plat": "2", "time": "16:10"}, {"name": "篠原車庫", "plat": "1", "time": "16:12"}, {"name": "篠原SC", "plat": "3", "time": "16:15"}, {"name": "神明町車庫", "plat": "", "time": "16:19"}] },
+        { "route": "宮01", "code": "0102A", "stops": [{"name": "神明町車庫", "plat": "1", "time": "16:23"}, {"name": "篠原SC", "plat": "1", "time": "16:28"}, {"name": "篠原車庫", "plat": "2", "time": "16:31"}, {"name": "宮園三叉路", "plat": "1", "time": "16:33"}, {"name": "宮園台団地", "plat": "", "time": "16:34"}] },
+        { "route": "宮10", "code": "0011C", "stops": [{"name": "宮園台団地", "plat": "1", "time": "16:37"}, {"name": "江ノ原二丁目", "plat": "1", "time": "16:39"}, {"name": "鴻野原", "plat": "", "time": "16:40"}] },
+        { "route": "宮10", "code": "0012C", "stops": [{"name": "鴻野原", "plat": "2", "time": "16:43"}, {"name": "江ノ原二丁目", "plat": "2", "time": "16:45"}, {"name": "宮園台団地", "plat": "", "time": "16:46"}] },
+        { "route": "永01", "code": "0111A", "stops": [{"name": "宮園台団地", "plat": "3", "time": "16:50"}, {"name": "宮園三叉路", "plat": "2", "time": "16:52"}, {"name": "篠原車庫", "plat": "1", "time": "16:54"}, {"name": "篠原SC", "plat": "2", "time": "16:57"}, {"name": "永野上丁", "plat": "2", "time": "16:59"}, {"name": "中野", "plat": "1", "time": "17:00"}, {"name": "永野川学校", "plat": "", "time": "17:02"}] },
+        { "route": "永01", "code": "0112A", "stops": [{"name": "永野川学校", "plat": "1", "time": "17:08"}, {"name": "中野", "plat": "2", "time": "17:10"}, {"name": "永野上丁", "plat": "1", "time": "17:11"}, {"name": "篠原SC", "plat": "1", "time": "17:15"}, {"name": "篠原車庫", "plat": "2", "time": "17:18"}, {"name": "宮園三叉路", "plat": "1", "time": "17:20"}, {"name": "宮園台団地", "plat": "", "time": "17:21"}] },
+        { "route": "宮10", "code": "0011F", "stops": [{"name": "宮園台団地", "plat": "1", "time": "17:37"}, {"name": "江ノ原二丁目", "plat": "1", "time": "17:39"}, {"name": "鴻野原", "plat": "", "time": "17:40"}] },
+        { "route": "宮10", "code": "0012F", "stops": [{"name": "鴻野原", "plat": "2", "time": "17:43"}, {"name": "江ノ原二丁目", "plat": "2", "time": "17:45"}, {"name": "宮園台団地", "plat": "", "time": "17:46"}] },
+        { "route": "宮80", "code": "8002A", "stops": [{"name": "宮園台団地", "plat": "3", "time": "17:52"}, {"name": "宮園三叉路", "plat": "2", "time": "17:54"}, {"name": "篠原車庫", "plat": "", "time": "17:55"}] }
+      ]
+    },
+    {
+      "op_name": "篠2",
+      "vehicle_id": "1412",
+      "trips": [
+        {"route": "SC01","code": "0123A","stops": [{"name": "篠原SC", "plat": "1", "time": "15:55"},{"name": "篠原車庫", "plat": "2", "time": "15:57"},{"name": "宮園三叉路", "plat": "1", "time": "15:59"},{"name": "江ノ原二丁目", "plat": "1", "time": "16:01"},{"name": "千日", "plat": "", "time": "16:04"},{"name": "宮園三叉路", "plat": "2", "time": "16:07"},{"name": "篠原車庫", "plat": "1", "time": "16:09"},{"name": "篠原SC", "plat": "", "time": "16:12"}]},
+        {"route": "笹02","code": "0211A","stops": [{"name": "篠原SC", "plat": "1", "time": "16:18"},{"name": "篠原車庫", "plat": "2", "time": "16:20"},{"name": "宮園三叉路", "plat": "1", "time": "16:22"},{"name": "九十九田", "plat": "1", "time": "16:24"},{"name": "今町", "plat": "1", "time": "16:28"},{"name": "笹越温泉", "plat": "1", "time": "16:32"},{"name": "笹越BC", "plat": "", "time": "16:34"}]},
+        {"route": "笹12","code": "0223A","stops": [{"name": "笹越BC", "plat": "3", "time": "16:40"},{"name": "笹越温泉", "plat": "1", "time": "16:42"},{"name": "笹越温泉深雪館", "plat": "1", "time": "16:47"},{"name": "笹越小中学校", "plat": "1", "time": "16:50"},{"name": "不黙の滝", "plat": "1", "time": "16:53"},{"name": "上ノ湯高原", "plat": "", "time": "16:57"}]},
+        {"route": "笹12","code": "0224A","stops": [{"name": "上ノ湯高原", "plat": "1", "time": "17:05"},{"name": "不黙の滝", "plat": "2", "time": "17:09"},{"name": "笹越小中学校", "plat": "2", "time": "17:12"},{"name": "笹越温泉深雪館", "plat": "1", "time": "17:15"},{"name": "笹越温泉", "plat": "1", "time": "17:20"},{"name": "笹越BC", "plat": "", "time": "17:22"}]},
+        {"route": "笹02","code": "0212A","stops": [{"name": "笹越BC", "plat": "2", "time": "17:30"},{"name": "笹越温泉", "plat": "1", "time": "17:32"},{"name": "今町", "plat": "2", "time": "17:36"},{"name": "九十九田", "plat": "2", "time": "17:40"},{"name": "宮園三叉路", "plat": "2", "time": "17:43"},{"name": "篠原車庫", "plat": "1", "time": "17:45"},{"name": "篠原SC", "plat": "", "time": "17:48"}]},
+        {"route": "SC01","code": "0123B","stops": [{"name": "篠原SC", "plat": "1", "time": "17:55"},{"name": "篠原車庫", "plat": "2", "time": "17:57"},{"name": "宮園三叉路", "plat": "1", "time": "17:59"},{"name": "江ノ原二丁目", "plat": "1", "time": "18:01"},{"name": "千日", "plat": "", "time": "18:04"},{"name": "宮園三叉路", "plat": "2", "time": "18:07"},{"name": "篠原車庫", "plat": "1", "time": "18:09"},{"name": "篠原SC", "plat": "", "time": "18:12"}]},
+       ]
+    },
+    {
+      "op_name": "篠3",
+      "vehicle_id": "901",
+      "trips": [
+        { "route": "永01", "code": "0112A", "stops": [{"name":"永野川学校","plat":"1","time":"15:55"},{"name":"中野","plat":"2","time":"15:57"},{"name":"永野上丁","plat":"1","time":"15:58"},{"name":"篠原SC","plat":"1","time":"16:02"},{"name":"篠原車庫","plat":"2","time":"16:05"},{"name":"宮園三叉路","plat":"1","time":"16:07"},{"name":"宮園台団地","time":"16:08"}] },
+        { "route": "宮10", "code": "0011B", "stops": [{"name":"宮園台団地","plat":"1","time":"16:17"},{"name":"江ノ原二丁目","plat":"1","time":"16:19"},{"name":"鴻野原","time":"16:20"}] },
+        { "route": "宮10", "code": "0012B", "stops": [{"name":"鴻野原","plat":"2","time":"16:23"},{"name":"江ノ原二丁目","plat":"2","time":"16:25"},{"name":"宮園台団地","time":"16:26"}] },
+        { "route": "宮80", "code": "8002A", "stops": [{"name":"宮園台団地","plat":"3","time":"16:33"},{"name":"宮園三叉路","plat":"2","time":"16:35"},{"name":"篠原車庫","time":"16:36"}] },
+        { "route": "宮80", "code": "8001A", "stops": [{"name":"篠原車庫","plat":"3","time":"16:42"},{"name":"宮園三叉路","plat":"1","time":"16:44"},{"name":"宮園台団地","time":"16:45"}] },
+        { "route": "宮10", "code": "0011D", "stops": [{"name":"宮園台団地","plat":"1","time":"16:57"},{"name":"江ノ原二丁目","plat":"1","time":"16:59"},{"name":"鴻野原","time":"17:00"}] },
+        { "route": "宮10", "code": "0012D", "stops": [{"name":"鴻野原","plat":"2","time":"17:03"},{"name":"江ノ原二丁目","plat":"2","time":"17:05"},{"name":"宮園台団地","time":"17:06"}] },
+        { "route": "宮10", "code": "0011E", "stops": [{"name":"宮園台団地","plat":"1","time":"17:17"},{"name":"江ノ原二丁目","plat":"1","time":"17:19"},{"name":"鴻野原","time":"17:20"}] },
+        { "route": "宮10", "code": "0012E", "stops": [{"name":"鴻野原","plat":"2","time":"17:23"},{"name":"江ノ原二丁目","plat":"2","time":"17:25"},{"name":"宮園台団地","time":"17:26"}] },
+        { "route": "宮02", "code": "0103A", "stops": [{"name":"宮園台団地","plat":"2","time":"17:30"},{"name":"宮園三叉路","plat":"2","time":"17:32"},{"name":"篠原車庫","plat":"1","time":"17:34"},{"name":"篠原SC北口","plat":"1","time":"17:36"},{"name":"神明町車庫","time":"17:39"}] },
+        { "route": "宮02", "code": "0104A", "stops": [{"name":"神明町車庫","plat":"1","time":"17:43"},{"name":"篠原SC北口","plat":"2","time":"17:48"},{"name":"篠原車庫","plat":"2","time":"17:51"},{"name":"宮園三叉路","plat":"1","time":"17:53"},{"name":"宮園台団地","time":"17:54"}] },
+        { "route": "宮10", "code": "0011G", "stops": [{"name":"宮園台団地","plat":"1","time":"17:57"},{"name":"江ノ原二丁目","plat":"1","time":"17:59"},{"name":"鴻野原","time":"18:00"}] },
+        { "route": "宮10", "code": "0012G", "stops": [{"name":"鴻野原","plat":"2","time":"18:03"},{"name":"江ノ原二丁目","plat":"2","time":"18:05"},{"name":"宮園台団地","time":"18:06"}] },
+        { "route": "宮80", "code": "8002A", "stops": [{"name":"宮園台団地","plat":"3","time":"18:12"},{"name":"宮園三叉路","plat":"2","time":"18:14"},{"name":"篠原車庫","time":"18:15"}] }
+      ]
+    },
+    {
+  "op_name": "桑1",
+  "vehicle_id": "201",
+  "trips": [
+    { "route": "桑80", "code": "8003A", "stops": [{"name":"桑川車庫","plat":"1","time":"16:00"},{"name":"桑川支所","time":"16:03"}] },
+    { "route": "桑01", "code": "0803A", "stops": [{"name":"桑川支所","plat":"2","time":"16:08"},{"name":"白川団地","plat":"1","time":"16:10"},{"name":"二本鋏","time":"16:11"}] },
+    { "route": "桑01", "code": "0804A", "stops": [{"name":"二本鋏","plat":"1","time":"16:18"},{"name":"白川団地","plat":"2","time":"16:20"},{"name":"桑川支所","time":"16:21"}] },
+    { "route": "堂02", "code": "0811A", "stops": [{"name":"桑川支所","plat":"2","time":"16:30"},{"name":"桑川車庫","plat":"2","time":"16:33"},{"name":"福寺","plat":"2","time":"16:36"},{"name":"堂の沢","plat":"1","time":"16:40"},{"name":"勝木駅","plat":"5","time":"16:42"}] },
+    { "route": "笹01急", "code": "0201A", "stops": [{"name":"新町駅","plat":"1","time":"16:55"},{"name":"鍛冶町","plat":"2","time":"16:57"},{"name":"勝木駅","plat":"入口2","time":"17:00"},{"name":"福寺","plat":"1","time":"17:03"},{"name":"桑川車庫","plat":"1","time":"17:06"},{"name":"桑川支所","plat":"1","time":"17:10"},{"name":"中野","plat":"2","time":"17:13"},{"name":"篠原SC","plat":"1","time":"17:19"},{"name":"篠原車庫","plat":"2","time":"17:21"},{"name":"九十九田","plat":"1","time":"17:24"},{"name":"田町","plat":"1","time":"17:28"},{"name":"笹越温泉","plat":"1","time":"17:32"},{"name":"笹越BC","time":"17:34"}] },
+    { "route": "笹01急", "code": "0202A", "stops": [{"name":"笹越BC","plat":"1","time":"17:45"},{"name":"笹越温泉","plat":"1","time":"17:47"},{"name":"田町","plat":"2","time":"17:51"},{"name":"九十九田","plat":"2","time":"17:55"},{"name":"篠原車庫","plat":"1","time":"17:58"},{"name":"篠原SC","plat":"2","time":"18:01"},{"name":"中野","plat":"1","time":"18:05"},{"name":"桑川支所","plat":"2","time":"18:09"},{"name":"桑川車庫","plat":"2","time":"18:12"},{"name":"福寺","plat":"2","time":"18:15"},{"name":"勝木駅","plat":"入口1","time":"18:19"},{"name":"鍛冶町","plat":"1","time":"18:22"},{"name":"新町駅","time":"18:24"}] },
+    { "route": "堂02", "code": "0812A", "stops": [{"name":"勝木駅","plat":"3","time":"18:32"},{"name":"堂の沢","plat":"1","time":"18:35"},{"name":"福寺","plat":"1","time":"18:38"},{"name":"桑川車庫","plat":"1","time":"18:42"},{"name":"桑川支所","time":"18:44"}] },
+    { "route": "桑80", "code": "8004A", "stops": [{"name":"桑川支所","plat":"2","time":"18:48"},{"name":"桑川車庫","time":"18:51"}] }
+  ]
+},
+{
+  "op_name": "桑2",
+  "vehicle_id": "1405",
+  "trips": [
+    { "route": "永11", "code": "0117A", "stops": [{"name":"桑川車庫","plat":"1","time":"15:50"},{"name":"桑川支所","plat":"1","time":"15:53"},{"name":"永野峠","plat":"1","time":"15:56"},{"name":"中野","plat":"2","time":"15:58"},{"name":"永野上丁","plat":"1","time":"16:00"},{"name":"篠原SC","plat":"1","time":"16:03"},{"name":"篠原車庫","plat":"2","time":"16:05"},{"name":"宮園三叉路","plat":"1","time":"16:07"},{"name":"江ノ原二丁目","plat":"1","time":"16:09"},{"name":"鴻野原","time":"16:10"}] },
+    { "route": "永11", "code": "0118A", "stops": [{"name":"鴻野原","plat":"2","time":"16:13"},{"name":"江ノ原二丁目","plat":"2","time":"16:14"},{"name":"宮園三叉路","plat":"2","time":"16:16"},{"name":"篠原車庫","plat":"1","time":"16:18"},{"name":"篠原SC","plat":"3","time":"16:22"},{"name":"永野上丁","plat":"2","time":"16:24"},{"name":"中野","plat":"1","time":"16:26"},{"name":"永野峠","plat":"2","time":"16:28"},{"name":"桑川支所","plat":"2","time":"16:31"},{"name":"桑川車庫","time":"16:34"}] },
+    { "route": "桑80", "code": "8003C", "stops": [{"name":"桑川車庫","plat":"1","time":"16:38"},{"name":"桑川支所","time":"16:41"}] },
+    { "route": "桑01", "code": "0803A", "stops": [{"name":"桑川支所","plat":"2","time":"16:45"},{"name":"桑川車庫","time":"16:48"}] },
+    { "route": "永02", "code": "0113A", "stops": [{"name":"桑川車庫","plat":"1","time":"16:53"},{"name":"桑川支所","plat":"1","time":"16:56"},{"name":"永野峠","plat":"1","time":"16:59"},{"name":"永野川学校","time":"17:01"}] },
+    { "route": "永02", "code": "0114A", "stops": [{"name":"永野川学校","plat":"1","time":"17:05"},{"name":"永野峠","plat":"2","time":"17:07"},{"name":"桑川支所","plat":"2","time":"17:10"},{"name":"桑川車庫","time":"17:13"}] },
+    { "route": "永11", "code": "0117B", "stops": [{"name":"桑川車庫","plat":"1","time":"17:20"},{"name":"桑川支所","plat":"1","time":"17:23"},{"name":"永野峠","plat":"1","time":"17:26"},{"name":"中野","plat":"2","time":"17:28"},{"name":"永野上丁","plat":"1","time":"17:30"},{"name":"篠原SC","plat":"1","time":"17:33"},{"name":"篠原車庫","plat":"2","time":"17:35"},{"name":"宮園三叉路","plat":"1","time":"17:37"},{"name":"江ノ原二丁目","plat":"1","time":"17:39"},{"name":"鴻野原","time":"17:40"}] },
+    { "route": "永11", "code": "0118B", "stops": [{"name":"鴻野原","plat":"2","time":"17:43"},{"name":"江ノ原二丁目","plat":"2","time":"17:44"},{"name":"宮園三叉路","plat":"2","time":"17:46"},{"name":"篠原車庫","plat":"1","time":"17:48"},{"name":"篠原SC","plat":"3","time":"17:52"},{"name":"永野上丁","plat":"2","time":"17:54"},{"name":"中野","plat":"1","time":"17:56"},{"name":"永野峠","plat":"2","time":"17:58"},{"name":"桑川支所","plat":"2","time":"18:01"},{"name":"桑川車庫","time":"18:04"}] }
+  ]
+},
+{
+  "op_name": "桑3",
+  "vehicle_id": "313",
+  "trips": [
+    { "route": "桑80", "code": "8003A", "stops": [{"name":"桑川車庫","plat":"1","time":"15:52"},{"name":"桑川支所","time":"15:55"}] },
+    { "route": "堂02", "code": "0811A", "stops": [{"name":"桑川支所","plat":"2","time":"16:00"},{"name":"桑川車庫","plat":"2","time":"16:03"},{"name":"福寺","plat":"2","time":"16:06"},{"name":"堂の沢","plat":"1","time":"16:10"},{"name":"勝木駅","time":"16:12"}] },
+    { "route": "永03旧", "code": "1803A", "stops": [{"name":"勝木駅","plat":"3","time":"16:20"},{"name":"堂の沢","plat":"1","time":"16:23"},{"name":"福寺","plat":"1","time":"16:26"},{"name":"桑川車庫","plat":"1","time":"16:30"},{"name":"桑川支所","plat":"1","time":"16:33"},{"name":"永野峠","plat":"1","time":"16:36"},{"name":"中野","plat":"2","time":"16:38"},{"name":"永野上丁","plat":"1","time":"16:40"},{"name":"篠原SC","time":"16:43"}] },
+    { "route": "永03旧", "code": "1804A", "stops": [{"name":"篠原SC","plat":"3","time":"16:50"},{"name":"永野上丁","plat":"2","time":"16:52"},{"name":"中野","plat":"1","time":"16:55"},{"name":"永野峠","plat":"2","time":"16:57"},{"name":"桑川支所","plat":"2","time":"17:00"},{"name":"桑川車庫","plat":"2","time":"17:03"},{"name":"福寺","plat":"2","time":"17:06"},{"name":"堂の沢","plat":"1","time":"17:10"},{"name":"勝木駅","time":"17:12"}] },
+    { "route": "永03旧", "code": "1803B", "stops": [{"name":"勝木駅","plat":"3","time":"17:20"},{"name":"堂の沢","plat":"1","time":"17:23"},{"name":"福寺","plat":"1","time":"17:26"},{"name":"桑川車庫","plat":"1","time":"17:30"},{"name":"桑川支所","plat":"1","time":"17:33"},{"name":"永野峠","plat":"1","time":"17:36"},{"name":"中野","plat":"2","time":"17:38"},{"name":"永野上丁","plat":"1","time":"17:40"},{"name":"篠原SC","time":"17:43"}] },
+    { "route": "永03旧", "code": "1804B", "stops": [{"name":"篠原SC","plat":"3","time":"17:50"},{"name":"永野上丁","plat":"2","time":"17:52"},{"name":"中野","plat":"1","time":"17:55"},{"name":"永野峠","plat":"2","time":"17:57"},{"name":"桑川支所","plat":"2","time":"18:00"},{"name":"桑川車庫","plat":"2","time":"18:03"},{"name":"福寺","plat":"2","time":"18:06"},{"name":"堂の沢","plat":"1","time":"18:10"},{"name":"勝木駅","time":"18:12"}] },
+    { "route": "堂02", "code": "0812A", "stops": [{"name":"勝木駅","plat":"3","time":"18:20"},{"name":"堂の沢","plat":"1","time":"18:23"},{"name":"福寺","plat":"1","time":"18:26"},{"name":"桑川車庫","plat":"1","time":"18:30"},{"name":"桑川支所","time":"18:32"}] },
+    { "route": "桑80", "code": "8004B", "stops": [{"name":"桑川支所","plat":"2","time":"18:35"},{"name":"桑川車庫","time":"18:38"}] }
+  ]
+}
+    
+  ]
+};
+
+// --- 変数管理 ---
+let selDep = "";
+let selArr = "";
+let currentStep = "dep"; // "dep" or "arr"
+const stopList = [];
+
+// 停留所リスト作成
+busDatabase.operations.forEach(op => {
+    op.trips.forEach(trip => {
+        trip.stops.forEach(s => { if(!stopList.includes(s.name)) stopList.push(s.name); });
+    });
+});
+
+// --- 関数 ---
+function navTo(pageId) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById(pageId).classList.add('active');
+}
+
+function goBackToHome() {
+    resetSearchState();
+    navTo('p-home');
+}
+
+function resetSearchState() {
+    selDep = "";
+    selArr = "";
+    currentStep = "dep";
+    document.getElementById('search-title').innerText = "■ 乗車停留所を入力";
+    document.getElementById('dep-selected-display').style.display = "none";
+    document.getElementById('searchInput').value = "";
+    document.getElementById('suggestArea').innerHTML = "";
+}
+
+function getSuggestions() {
+    const val = document.getElementById('searchInput').value.trim();
+    const area = document.getElementById('suggestArea');
+    
+    // 入力エリアを一旦クリア
+    area.innerHTML = "";
+    
+    if(!val) return; // 空入力の場合は何もしない
+
+    // 検索実行
+    const matches = stopList.filter(s => s.includes(val));
+    
+    if(matches.length > 0) {
+        // 候補がある場合
+        matches.forEach(m => {
+            const d = document.createElement('div');
+            d.className = "suggest-item";
+            d.innerText = m;
+            d.onclick = () => selectStop(m);
+            area.appendChild(d);
+        });
+    } else {
+        // 【修正ポイント】アラートではなく、エリア内にメッセージを表示
+        const noData = document.createElement('div');
+        noData.style.padding = "15px";
+        noData.style.color = "#666";
+        noData.style.backgroundColor = "#f8f8f8";
+        noData.innerText = "該当する停留所が見つかりません";
+        area.appendChild(noData);
+    }
+}
+
+function selectStop(name) {
+    if(currentStep === "dep") {
+        selDep = name;
+        currentStep = "arr";
+        document.getElementById('search-title').innerText = "■ 降車停留所を入力";
+        document.getElementById('dep-selected-display').innerText = "乗車： " + name;
+        document.getElementById('dep-selected-display').style.display = "block";
+        document.getElementById('searchInput').value = "";
+        document.getElementById('suggestArea').innerHTML = "";
+    } else {
+        selArr = name;
+        showResult();
+    }
+}
+
+function showResult() {
+    const list = document.getElementById('results-list');
+    document.getElementById('res-route-name').innerText = `${selDep} → ${selArr}`;
+    list.innerHTML = "";
+    const now = new Date();
+
+    let hits = [];
+    busDatabase.operations.forEach(op => {
+        op.trips.forEach(trip => {
+            const dIdx = trip.stops.findIndex(s => s.name === selDep);
+            const aIdx = trip.stops.findIndex(s => s.name === selArr);
+            if(dIdx !== -1 && aIdx !== -1 && dIdx < aIdx) {
+                const s = trip.stops[dIdx];
+                const [th, tm] = s.time.split(':').map(Number);
+                const target = new Date();
+                target.setHours(th, tm, 0);
+                const diff = Math.floor((target - now) / 60000);
+                if(diff >= -2) hits.push({ diff, ...trip, stop: s, vid: op.vehicle_id });
+            }
+        });
+    });
+
+    if(hits.length === 0) {
+        list.innerHTML = "該当するバスはありません。歩いてください。";
+    } else {
+        hits.sort((a,b) => a.diff - b.diff).forEach(h => {
+            let st = h.diff === 0 ? "まもなく到着" : h.diff < 0 ? "到着済み" : "あと " + h.diff + " 分";
+            list.innerHTML += `
+                <div class="bus-card">
+                    <b>[${h.route}]</b>　${h.vid}号車<br>
+                    ${h.stop.time}発 (${h.stop.plat||'-'}番のりば)<br>
+                    状態：<span class="status-red">${st}</span>
+                </div>`;
+        });
+    }
+    navTo('p-result');
+}
+
+function searchVehicle() {
+    const val = document.getElementById('vInput').value.trim();
+    const res = document.getElementById('vResults');
+    res.innerHTML = "";
+    if(!val) return;
+    
+    // 車両ごとの最新行程を表示
+    busDatabase.operations.forEach(op => {
+        if(op.vehicle_id.includes(val)) {
+            op.trips.forEach(t => {
+                res.innerHTML += `
+                    <div class="bus-card">
+                        <b>${op.vehicle_id}号車</b><br>
+                        系統：${t.route}<br>
+                        始発：${t.stops[0].name} ${t.stops[0].time}
+                    </div>`;
+            });
+        }
+    });
+    if(!res.innerHTML) res.innerHTML = "見つかりません";
+}
+</script>
+</body>
+</html>
